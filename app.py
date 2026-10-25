@@ -20,8 +20,19 @@ def ocr(img):
 
 
 def translate(text):
-    from deep_translator import GoogleTranslator
-    return GoogleTranslator(source=SRC_LANG, target=DST_LANG).translate(text)
+    import time
+    from deep_translator import GoogleTranslator, MyMemoryTranslator
+    text = " ".join(text.split())  # OCRの改行を除いて文として翻訳する
+    for wait in (0, 1.5):  # Googleを最大2回試す
+        time.sleep(wait)
+        try:
+            return GoogleTranslator(source=SRC_LANG, target=DST_LANG).translate(text)
+        except Exception:
+            pass
+    # 制限された場合は別サービスに切り替える (1回500文字まで)
+    parts = [text[i:i + 450] for i in range(0, len(text), 450)]
+    tr = MyMemoryTranslator(source="en-US", target="ja-JP")
+    return "".join(tr.translate(part) for part in parts)
 
 
 class Selector(tk.Toplevel):
