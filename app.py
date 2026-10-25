@@ -1,4 +1,6 @@
 import ctypes
+import ctypes.wintypes
+import queue
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -12,6 +14,24 @@ try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)  # 座標を物理ピクセルに揃える
 except Exception:
     pass
+
+
+HOTKEY_LABEL = "Ctrl+Alt+T"
+MOD_ALT, MOD_CONTROL, MOD_NOREPEAT = 0x1, 0x2, 0x4000
+VK_T = 0x54
+WM_HOTKEY = 0x0312
+
+
+def hotkey_loop(q):
+    """グローバルホットキーを登録し、押されたらキューに通知する(別スレッド)。"""
+    user32 = ctypes.windll.user32
+    if not user32.RegisterHotKey(None, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_T):
+        q.put("failed")
+        return
+    msg = ctypes.wintypes.MSG()
+    while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+        if msg.message == WM_HOTKEY:
+            q.put("hotkey")
 
 
 def ocr(img):
@@ -82,10 +102,30 @@ class App(tk.Tk):
         self.attributes("-topmost", True)
         ttk.Button(self, text="範囲を選択して翻訳", command=self.select).pack(
             fill="x", padx=8, pady=8)
-        self.status = ttk.Label(self, text="ボタンを押して、翻訳したい範囲をドラッグしてください (Escで中止)")
+        self.status = ttk.Label(
+            self, text=f"ボタンか {HOTKEY_LABEL} で範囲をドラッグ (Escで中止)")
         self.status.pack(anchor="w", padx=8)
         self.src = self.make_box("認識した文字")
         self.dst = self.make_box("翻訳結果")
+        self.busy = False
+        self.hotkeys = queue.Queue()
+        try:
+            threading.Thread(target=hotkey_loop, args=(self.hotkeys,), daemon=True).start()
+        except Exception:
+            pass
+        self.after(100, self.poll_hotkey)
+
+    def poll_hotkey(self):
+        try:
+            while True:
+                event = self.hotkeys.get_nowait()
+                if event == "hotkey":
+                    self.select()
+                else:
+                    self.status.config(text="ショートカットを登録できませんでした (他のアプリが使用中)")
+        except queue.Empty:
+            pass
+        self.after(100, self.poll_hotkey)
 
     def make_box(self, title):
         frame = ttk.LabelFrame(self, text=title)
@@ -99,11 +139,15 @@ class App(tk.Tk):
         box.insert("1.0", text)
 
     def select(self):
+        if self.busy:  # 選択中の二重起動を防ぐ
+            return
+        self.busy = True
         self.withdraw()
         self.after(200, lambda: Selector(self, self.captured))
 
     def captured(self, box):
         if not box:
+            self.busy = False
             self.deiconify()
             return
         # オーバーレイと本ウィンドウが画面から消えるのを待ってから撮影する
@@ -111,6 +155,7 @@ class App(tk.Tk):
 
     def grab(self, box):
         img = ImageGrab.grab(bbox=box, all_screens=True)
+        self.busy = False
         self.deiconify()
         if img.height < 100:  # 小さい文字はOCRしにくいので拡大
             scale = 100 / img.height
