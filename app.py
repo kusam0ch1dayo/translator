@@ -3,7 +3,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
-from PIL import ImageGrab
+from PIL import Image, ImageGrab
 
 SRC_LANG = "en"  # OCR・翻訳元
 DST_LANG = "ja"  # 翻訳先
@@ -92,10 +92,18 @@ class App(tk.Tk):
         self.after(200, lambda: Selector(self, self.captured))
 
     def captured(self, box):
-        self.deiconify()
         if not box:
+            self.deiconify()
             return
+        # オーバーレイと本ウィンドウが画面から消えるのを待ってから撮影する
+        self.after(400, self.grab, box)
+
+    def grab(self, box):
         img = ImageGrab.grab(bbox=box, all_screens=True)
+        self.deiconify()
+        if img.height < 100:  # 小さい文字はOCRしにくいので拡大
+            scale = 100 / img.height
+            img = img.resize((int(img.width * scale), 100), Image.LANCZOS)
         self.status.config(text="認識・翻訳中...")
         threading.Thread(target=self.work, args=(img,), daemon=True).start()
 
